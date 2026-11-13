@@ -205,18 +205,32 @@ def spoil_weight(model, info) -> None:
     w.data[i, j] = -w.data[i, j]
 
 
-def write_golden(path, tw, ses, got: np.ndarray, info: dict) -> None:
+def write_golden(path, tw, ses, got: np.ndarray, info: dict, inject_at: int) -> None:
     import pyarrow as pa
     import pyarrow.parquet as pq
 
+    path = Path(path)
+    ids = np.array([tw.model_id(t) for t in ses.toks], dtype=np.int32)
+    dims = [int(tw.lay.dim(d)) for d in tw.keep]
+    kept = got.astype(np.float32)
+    assert (kept.astype(np.float64) == got).all()
     cols = {"position": pa.array(np.arange(len(ses.toks), dtype=np.int32)),
-            "model_id": pa.array(np.array([tw.model_id(t) for t in ses.toks], dtype=np.int32)),
+            "model_id": pa.array(ids),
             "owned": pa.array(np.array(ses.own, dtype=np.bool_))}
-    for k, d in enumerate([tw.lay.dim(d) for d in tw.keep]):
-        cols[f"dim_{d}"] = pa.array(got[:, k].astype(np.float32))
+    for k, d in enumerate(dims):
+        cols[f"dim_{d}"] = pa.array(kept[:, k])
     table = pa.table(cols).replace_schema_metadata(
-        {"layout": info["layout"], "chip_token_offset": str(info["chip_token_offset"])})
+        {"layout": info["layout"], "chip_token_offset": str(info["chip_token_offset"]),
+         "inject_at": str(inject_at)})
     pq.write_table(table, str(path), compression="zstd")
+    raw = path.with_suffix(".raw")
+    raw.mkdir(parents=True, exist_ok=True)
+    ids.astype("<i4").tofile(raw / "ids.i32")
+    np.ascontiguousarray(kept, dtype="<f4").tofile(raw / "kept.f32")
+    (raw / "golden.json").write_text(json.dumps(
+        {"positions": len(ids), "dims": dims, "inject_at": inject_at, "layout": info["layout"],
+         "chip_token_offset": info["chip_token_offset"], "ids": "ids.i32", "kept": "kept.f32",
+         "dtype": {"ids": "<i4", "kept": "<f4"}}, indent=1))
 
 
 def main() -> None:
@@ -260,7 +274,7 @@ def main() -> None:
              device=args.device, seconds=round(time.time() - t0, 1))
     print(json.dumps(r))
     if args.golden and r["ok"] and not args.control:
-        write_golden(Path(args.golden), tw, ses, got, info)
+        write_golden(Path(args.golden), tw, ses, got, info, first)
     sys.exit(int(r["ok"]) if args.control else int(not r["ok"]))
 
 
