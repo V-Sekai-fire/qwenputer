@@ -1,5 +1,4 @@
-"""The standalone tower (rv/export_tower.py): its exported firmware state is what hf.inject writes,
-and its matrices split into ternary planes that sum back bit for bit (rv/ternary.py)."""
+"""The standalone tower's exported state and ternary planes (docs/tower.md)."""
 
 import pytest
 import torch
@@ -25,7 +24,6 @@ def test_exported_state_is_the_injected_state():
 
 
 def circuit_like(rows: int, cols: int, seed: int) -> torch.Tensor:
-    """Sparse, with magnitudes far apart, as the emitted matrices are."""
     g = torch.Generator().manual_seed(seed)
     mags = torch.tensor([2.0**-12, 1.0, 7.5, 128.0, 2.0**30, 2.0**40])
     w = mags[torch.randint(0, len(mags), (rows, cols), generator=g)]

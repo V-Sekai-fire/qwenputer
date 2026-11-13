@@ -1,27 +1,4 @@
-"""The tower's matrices as sums of ternary planes (weights in {-1, 0, +1} with a scale per group).
-
-    python -m chipformer.rv.ternary TOWER [--group 128] [--out TOWER/ternary.safetensors]
-
-A plane is a ternary matrix T and one scale per (row, group of ``group`` columns); a matrix is
-
-    W = sum_p  scale_p[row, col // group] * T_p[row, col]
-
-Each weight sits in exactly one plane: within a group the distinct magnitudes are ranked, and
-plane p holds the weights of rank p with that magnitude as the group's scale. So the planes'
-sum has one nonzero term per weight and equals W bit for bit, and a matmul over the planes adds
-the same products as the dense one (fp32 accumulation, in another order).
-
-The plane count K of a matrix is the largest number of distinct magnitudes in any of its groups.
-Scales are the circuit's own weights, so they are bf16 values; ``fp16`` reports whether they
-also fit fp16 (the scale type of ninfer's t2_g128_fp16).
-
-The scale may run the other way (one per column and group of rows: the planes of the transposed
-matrix, ``scale_axis`` "column"); it is used where it needs fewer planes, as in the MLP output
-maps, whose columns are units with one coefficient each.
-
-Without ``--out`` only the table is printed. With it the planes are written (trits int8, scales
-bf16) for every matrix with K <= ``--max-planes``; the others, and the 1-D tensors, stay dense.
-"""
+"""A tower's matrices as sums of ternary planes (docs/tower.md)."""
 
 import json
 from pathlib import Path
@@ -32,7 +9,6 @@ F16_MAX, F16_MIN = 65504.0, 2.0**-24
 
 
 def planes(w: torch.Tensor, group: int = 128) -> tuple[torch.Tensor, torch.Tensor]:
-    """(trits, scales): trits (K, rows, cols) int8, scales (K, rows, groups) in w's dtype."""
     rows, cols = w.shape
     g = -(-cols // group)
     a = torch.zeros(rows, g * group, dtype=torch.float32)
@@ -77,8 +53,6 @@ def report(name: str, w: torch.Tensor, group: int) -> tuple[dict, torch.Tensor, 
 
 
 def best(name: str, w: torch.Tensor, group: int) -> tuple[dict, torch.Tensor, torch.Tensor]:
-    """report() with the scale axis that needs fewer planes (the transposed matrix's planes
-    when ``scale_axis`` is "column")."""
     r, trits, scales = report(name, w, group)
     r["scale_axis"] = "row"
     if r["planes"] > 3:

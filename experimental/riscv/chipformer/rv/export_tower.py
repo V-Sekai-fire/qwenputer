@@ -1,26 +1,4 @@
-"""Export the RV32 machine and its text bridge as a standalone tower (layout "rv1-tower").
-
-    python -m chipformer.rv.export_tower HOST --out dist/tower-27b \\
-        [--firmware tests/data/rv/calc-bridge.elf]
-
-HOST is a directory with the host model's ``config.json`` and ``tokenizer.json`` (for Bonsai 2:
-Qwen3.8-27B's). The circuit is compiled for the host's DeltaNet shape (key heads, value heads,
-MLP width), but the host's weights are not read and not changed: the tower has its own residual
-stream (no host dims: ``chip_dims_offset`` 0), its own embedding table and its own states. A
-decoder runs every token through the tower and reads the output code; text tokens also run
-through the host, untouched, exactly as rv/chat.py's fast path does with a merged checkpoint.
-
-Model ids are the merged layout's: a host token keeps its id, chip token t is ``vocab + t``.
-
-Written files:
-
-- ``model.safetensors``: the chip layers (HF names, bf16) and ``model.embed_tokens.weight``.
-  The MLPs are cut to the units the circuit uses (the rest of the host's width is zero). With
-  ``--firmware``, also ``firmware.NAME.state``: the parked firmware as the DeltaNet states,
-  shape (layers, value heads, key dim, value dim), fp32.
-- ``config.json``: architecture ``ChipTower``, the tower's text config, and ``chip_config``: the
-  layout (rv/merge.py's ``chipformer.json`` fields) and the firmware names.
-"""
+"""Export the RV32 machine as a standalone tower (docs/tower.md)."""
 
 import json
 from dataclasses import dataclass
@@ -60,7 +38,6 @@ class Tower:
         return [self.lay.dim(next(iter(e.terms))) for e in self.c.code]
 
     def model_id(self, t: int) -> int:
-        """Stream token (chip token, or TEXT_TOKEN | host id) -> model id."""
         return t - S.TEXT_TOKEN if S.is_text(t) else self.v0 + t
 
     def text_config(self, intermediate: int) -> dict:
@@ -91,7 +68,6 @@ def build(host) -> Tower:
 
 
 def used_units(layers: dict, n_layers: int) -> int:
-    """MLP units the circuit uses (they are emitted from unit 0 up)."""
     top = 0
     for L in range(n_layers):
         gate, up, down = (layers[f"model.layers.{L}.{k}"] for k in MLP)
@@ -101,8 +77,6 @@ def used_units(layers: dict, n_layers: int) -> int:
 
 
 def emit(tw: Tower) -> tuple[dict, dict]:
-    """(state dict in bf16, text config): the chip layers, cut to their units, and the
-    embedding table."""
     c, lay = tw.c, tw.lay
     n_chip = c.n_layers()
     full = tw.text_config(c.target.intermediate)
@@ -144,8 +118,6 @@ def meta(tw: Tower, tc: dict) -> dict:
 
 
 def state(c) -> torch.Tensor:
-    """The heads' initial states (set by core.snapshot) as (layers, value heads, key dim, value
-    dim) fp32: what hf.inject writes into the HF cache."""
     nv = c.target.value_heads
     r = nv // c.target.key_heads
     st = np.zeros((c.n_layers(), nv, HD, HD), dtype=np.float32)
@@ -181,9 +153,6 @@ def save(tw: Tower, out, firmware=None) -> dict:
 
 
 def load_reference(path, dtype=torch.bfloat16):
-    """(text model, chip_config): the tower in stock HF modules, with the one zero full-attention
-    layer HF's cache needs to count positions. ``hidden_states[chip_layers]`` is the residual
-    after the chip layers."""
     from safetensors.torch import load_file
     from transformers import Qwen3_5TextConfig
     from transformers.models.qwen3_5 import modeling_qwen3_5 as q
