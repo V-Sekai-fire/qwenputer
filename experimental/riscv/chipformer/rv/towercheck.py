@@ -114,7 +114,7 @@ def code_token(tw, code: np.ndarray) -> int | None:
 
 @torch.no_grad()
 def run(tw, model, info, ids: list[int], inject_at: int, mode: str, state_dtype=None,
-        spoil=None, verbose: bool = False) -> np.ndarray:
+        spoil=None, verbose: bool = False, chunk: int = 1024) -> np.ndarray:
     """The residual after the chip layers on the kept dims, at every position of ``ids``.
     The snapshot is injected before position ``inject_at``."""
     n_chip = info["chip_layers"]
@@ -147,8 +147,8 @@ def run(tw, model, info, ids: list[int], inject_at: int, mode: str, state_dtype=
     rest = ids[inject_at:]
     t0 = time.time()
     if mode == "prefill":
-        for a in range(0, len(rest), 1024):
-            h, cache = fwd(rest[a:a + 1024], cache)
+        for a in range(0, len(rest), chunk):
+            h, cache = fwd(rest[a:a + chunk], cache)
             hs.append(h)
     else:
         for t, x in enumerate(rest):
@@ -229,6 +229,7 @@ def main() -> None:
     ap.add_argument("--random", type=int, default=0, help="add this many random expressions")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--mode", choices=["decode", "prefill"], default="decode")
+    ap.add_argument("--chunk", type=int, default=1024, help="prefill tokens per forward call")
     ap.add_argument("--served", action="store_true")
     ap.add_argument("--device", default="cpu")
     ap.add_argument("--golden")
@@ -252,7 +253,8 @@ def main() -> None:
     t0 = time.time()
     got = run(tw, model, info, ids, first, args.mode,
               state_dtype=torch.float16 if args.control == "fp16" else None,
-              spoil=spoil_rom(tw, args.firmware) if args.control == "rom" else None, verbose=True)
+              spoil=spoil_rom(tw, args.firmware) if args.control == "rom" else None, verbose=True,
+              chunk=args.chunk)
     r = compare(tw, ses, skip, mat, got, first)
     r.update(mode=args.mode, served=args.served, control=args.control, runs=len(ses.runs),
              device=args.device, seconds=round(time.time() - t0, 1))
