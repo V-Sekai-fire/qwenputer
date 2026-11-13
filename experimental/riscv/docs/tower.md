@@ -71,8 +71,17 @@ Controls. Each must fail, and with `--control` the exit status is 0 only if the 
 - `weight` flips the sign of one MLP output weight.
 - `fp16` keeps the DeltaNet states in fp16. A state row's ballast, 2^24, does not fit.
 
-`--golden` writes the stream and the kept values as zstd parquet (extra `golden`), for another
-runtime to be held to.
+`--golden out.parquet` writes the stream and the kept values, for another runtime to be held to
+(extra `golden`):
+
+- `out.parquet`, zstd: `position`, `model_id`, `owned` and one `dim_<residual index>` column per
+  kept dim. The schema metadata holds `inject_at`, the position where the firmware state is
+  loaded (the prompt length with `--served`).
+- `out.raw/`, for a runtime without a parquet reader: `ids.i32` (little-endian int32 model ids),
+  `kept.f32` (little-endian float32, positions by kept dims, row-major) and `golden.json`
+  (positions, the kept dims in column order, `inject_at`).
+
+The golden rows include the prompt positions.
 
 Devices. CPU bf16 is correct but far too slow for decode mode. MPS and CUDA are bit-exact. On
 MPS, a long prefill run can have a command buffer aborted by the system

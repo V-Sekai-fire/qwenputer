@@ -1,22 +1,4 @@
-"""Check an exported tower (rv/export_tower.py) in stock HF modules against the IR evaluator and
-the reference machine, with the host's text teacher-forced (no host weights are needed).
-
-    python -m chipformer.rv.towercheck TOWER HOST --firmware tests/data/rv/calc-bridge.elf \\
-        [--mode decode|prefill] [--served] [--golden out.parquet] [--control rom|weight|fp16]
-
-The stream is the one a decoder would produce: the chat prompt (with the calc tool), then for
-each expression the host's tool call, the machine's run with its echoes, and a few text tokens.
-At every position the residual after the chip layers must equal the IR's on the kept dims (output
-code, tau, mu) bit for bit; the code must be set exactly where the reference says the circuit
-owns the next token, and must name that token.
-
-``--served`` runs the prompt from zero states and injects the snapshot after it, as a decoder
-does (rv/chat.py); otherwise the snapshot is injected first, as the IR has it.
-
-A control must fail: ``rom`` flips the low bit of each byte of the ROM word the parked machine
-runs next, ``weight`` flips one MLP output weight, ``fp16`` keeps the DeltaNet states in fp16 (a
-state row's ballast, 2^24, does not fit). With ``--control`` the exit status is 0 only if the check fails.
-"""
+"""Check an exported tower against the IR and the reference machine (docs/tower.md)."""
 
 import argparse
 import json
@@ -36,7 +18,6 @@ EXPRS = ["123456789*987654321", "2*(3+4)-50", "(1.2 - 3) * 4.5 - 0.75", "-84/18"
 
 
 def random_exprs(n: int, seed: int = 0) -> list[str]:
-    """Integer, decimal and fraction expressions within the calc tool's limits."""
     import random
 
     rng = random.Random(seed)
@@ -82,8 +63,6 @@ def prompt_ids(host, ask: str) -> list[int]:
 
 
 def stream(tw, firmware, prompt: list[int], exprs: list[str]):
-    """(session, skip): the reference's stream, and the owned positions whose next token is
-    prefilled history."""
     ses = BR.Session(tw.T, export_tower.parked(firmware))
     ses.history(prompt)
     skip = {i for i, q in enumerate(prompt) if q == tw.T.TCC}
@@ -94,7 +73,6 @@ def stream(tw, firmware, prompt: list[int], exprs: list[str]):
 
 
 def want(tw, firmware, toks: list[int]) -> np.ndarray:
-    """The IR's values of the kept dims at every position."""
     core.snapshot(tw.c, export_tower.parked(firmware))
     carry, mats = {}, []
     for a in range(0, len(toks), 2048):
@@ -103,7 +81,6 @@ def want(tw, firmware, toks: list[int]) -> np.ndarray:
 
 
 def code_token(tw, code: np.ndarray) -> int | None:
-    """rv/chat.py's code_token, as a stream token."""
     if not (code != 0).any():
         return None
     bits = (code > 0).astype(int).tolist()
@@ -115,8 +92,6 @@ def code_token(tw, code: np.ndarray) -> int | None:
 @torch.no_grad()
 def run(tw, model, info, ids: list[int], inject_at: int, mode: str, state_dtype=None,
         spoil=None, verbose: bool = False, chunk: int = 1024) -> np.ndarray:
-    """The residual after the chip layers on the kept dims, at every position of ``ids``.
-    The snapshot is injected before position ``inject_at``."""
     n_chip = info["chip_layers"]
     cols = [tw.lay.dim(d) for d in tw.keep]
     zero = info["chip_token_offset"] + info["chip_vocab"]  # a padding row: all zero
@@ -160,7 +135,6 @@ def run(tw, model, info, ids: list[int], inject_at: int, mode: str, state_dtype=
 
 
 def compare(tw, ses, skip: set[int], mat: np.ndarray, got: np.ndarray, first: int = 0) -> dict:
-    """``got`` against the IR (``mat``) and the reference's stream, from position ``first``."""
     toks, w = ses.toks, mat
     n_code = len(tw.c.code)
     inexact = int((got[first:] != w[first:]).any(1).sum())
@@ -180,8 +154,6 @@ def compare(tw, ses, skip: set[int], mat: np.ndarray, got: np.ndarray, first: in
 
 
 def spoil_rom(tw, firmware):
-    """Flip the low bit of each byte of the ROM word the parked machine runs next (the layout
-    of core.byte_rows)."""
     m = export_tower.parked(firmware)
     wi = m.anchor + m.n
     per = 2048  # words per key head (core.snapshot: ROM_WORDS >> 11 heads)
